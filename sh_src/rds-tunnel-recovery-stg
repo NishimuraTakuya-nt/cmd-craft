@@ -16,12 +16,12 @@ fi
 
 # known_hostsからエントリを削除
 remove_known_hosts_entry() {
-    ssh-keygen -R rds-tunnel
+    ssh-keygen -R rds-tunnel-stg
 }
 
 # 公開鍵をEC2インスタンスに登録
 register_public_key() {
-    local instance_id=$(get-dev-bastion-instance-id)
+    local instance_id=$(get-stg-bastion-instance-id)
     echo "Instance ID: $instance_id"
     local public_key=$(cat ~/.ssh/"${PUBLIC_KEY_FILE_FOR_BASTION}")
 
