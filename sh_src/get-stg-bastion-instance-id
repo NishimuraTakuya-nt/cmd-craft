@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# 環境変数読み込み
+LOAD_ENV_SCRIPT="${SCRIPT_DIR}/load_env.sh"
+if [ -f "$LOAD_ENV_SCRIPT" ]; then
+    source "$LOAD_ENV_SCRIPT"
+    load_env_vars
+else
+    echo "Error: Cannot find load_env.sh script" >&2
+    exit 1
+fi
+
+
+# EC2インスタンス情報の取得
+aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=${STG_BASTION}" "Name=instance-state-name,Values=running" \
+    --query "Reservations[].Instances[?State.Name=='running'][].InstanceId" \
+    --output json | jq -r '.[]'
