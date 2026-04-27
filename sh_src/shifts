@@ -1,0 +1,4 @@
+while true; do
+  osascript -e 'tell application "System Events" to key code 56'
+  sleep 5
+done
