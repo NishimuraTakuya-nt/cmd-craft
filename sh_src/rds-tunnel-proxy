@@ -1,0 +1,98 @@
+#!/bin/bash
+#
+# ~/.ssh/config の ProxyCommand から呼び、dev・stg の踏み台へ SSM 経由で SSH をつなぐ。
+# 踏み台が作り直されていたら、つなぐ前に known_hosts の削除と公開鍵の登録をする。
+#   dev: ProxyCommand /Users/nishimuratakuya/bin/cmd-craft/sh_src/rds-tunnel-proxy %p
+#   stg: ProxyCommand /Users/nishimuratakuya/bin/cmd-craft/sh_src/rds-tunnel-proxy %p stg
+#
+# 標準出力は SSH の通信路になるので、メッセージはすべて標準エラーに出す。
+# 詳しくは rds-tunnel-proxy.md
+
+set -euo pipefail
+
+# DataGrip などの GUI から呼ばれると ~/.zprofile の PATH が入らないことがあるので、Homebrew の場所を足す
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# 環境変数読み込み
+LOAD_ENV_SCRIPT="${SCRIPT_DIR}/load_env.sh"
+if [ -f "$LOAD_ENV_SCRIPT" ]; then
+    source "$LOAD_ENV_SCRIPT"
+    load_env_vars
+else
+    echo "Error: Cannot find load_env.sh script" >&2
+    exit 1
+fi
+
+# 前回つないだ踏み台のインスタンス ID を、Host 名ごとに置く場所
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cmd-craft"
+
+# 作り直された踏み台に、SSH でつなげるようにする
+recover() {
+    local instance_id="$1"
+    local host_alias="$2"
+    local public_key keys_file command_id
+
+    # 古いホスト鍵を known_hosts から消す（結果が標準出力に出るので捨てる）
+    ssh-keygen -R "$host_alias" >/dev/null 2>&1 || true
+
+    # 公開鍵を踏み台の authorized_keys に登録する（登録済みなら何もしない）
+    public_key=$(cat ~/.ssh/"${PUBLIC_KEY_FILE_FOR_BASTION}")
+    keys_file="/home/${REMOTE_USER}/.ssh/authorized_keys"
+    command_id=$(aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunShellScript" \
+        --parameters "$(jq -n --arg c "grep -qxF '${public_key}' ${keys_file} || echo '${public_key}' >> ${keys_file}" '{commands: [$c]}')" \
+        --comment "Register public key for SSH access" \
+        --query "Command.CommandId" \
+        --output text)
+
+    # send-command は実行を待たずに戻るので、終わるまで待つ
+    aws ssm wait command-executed --command-id "$command_id" --instance-id "$instance_id"
+}
+
+# メイン処理
+# 引数: <ポート> [dev|stg]（環境を省くと dev）
+main() {
+    local port="${1:-22}"
+    local env="${2:-dev}"
+    local host_alias instance_id cache_file
+
+    # %p が置き換えられずに渡ってきたときは 22 にする
+    [[ "$port" =~ ^[0-9]+$ ]] || port=22
+
+    # 環境ごとの ~/.ssh/config の Host 名
+    case "$env" in
+        dev) host_alias="rds-tunnel" ;;
+        stg) host_alias="rds-tunnel-stg" ;;
+        *)
+            echo "Error: Unknown environment: ${env} (use dev or stg)" >&2
+            exit 1
+            ;;
+    esac
+
+    instance_id=$("${SCRIPT_DIR}/get-${env}-bastion-instance-id" | head -n 1)
+    if [ -z "$instance_id" ]; then
+        echo "Error: Cannot find running ${env} bastion instance" >&2
+        exit 1
+    fi
+
+    # 前回の踏み台と違えば、作り直されたとみなしてリカバリーする
+    cache_file="${CACHE_DIR}/${host_alias}-instance-id"
+    if [ "$(cat "$cache_file" 2>/dev/null)" != "$instance_id" ]; then
+        echo "Bastion (${env}) changed to ${instance_id}. Recovering..." >&2
+        recover "$instance_id" "$host_alias"
+        mkdir -p "$CACHE_DIR"
+        echo "$instance_id" > "$cache_file"
+        echo "Recovered." >&2
+    fi
+
+    # このプロセスを SSM のセッションに置き換え、標準入出力をそのまま SSH の通信路にする
+    exec aws ssm start-session \
+        --target "$instance_id" \
+        --document-name AWS-StartSSHSession \
+        --parameters "portNumber=${port}"
+}
+
+main "$@"
