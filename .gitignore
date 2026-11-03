@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 
 /src/craft.egg-info/
+fx_out/

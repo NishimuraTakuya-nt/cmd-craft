@@ -68,3 +68,14 @@ Instructions for how to contribute to your project.
 ## License
 
 Specify your project's license here.
+## Claude Code Skills
+
+### `fx-jpy-chart` — ドル円・ラリ円 推移グラフ
+
+`.claude/skills/fx-jpy-chart/` に配置。Claude Code で「ドル円とラリ円の推移を見せて」などと依頼すると、
+最新ニュースを WebSearch で調査したうえで USD/JPY・GEL/JPY のグラフ（HTML/SVG、任意で PNG）を生成する。
+
+スクリプト単体でも利用可能（標準ライブラリのみ）:
+```
+python3 .claude/skills/fx-jpy-chart/scripts/fx_chart.py --days 365 --out fx_out [--events events.json] [--png]
+```
